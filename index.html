@@ -1,0 +1,379 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover">
+<title>3D Battleship ⚓</title>
+<style>
+  *{box-sizing:border-box; -webkit-tap-highlight-color:transparent}
+  html,body{margin:0; height:100%; overflow:hidden; background:#06233d; color:#fff;
+    font-family:"Pretendard",system-ui,-apple-system,"Apple SD Gothic Neo","Malgun Gothic",sans-serif}
+  #app{display:flex; flex-direction:column; height:100dvh;
+    padding:max(8px,env(safe-area-inset-top)) 10px max(10px,env(safe-area-inset-bottom))}
+  header{display:flex; align-items:center; justify-content:space-between; gap:8px}
+  h1{font-size:clamp(18px,5vw,26px); margin:0}
+  .turn{margin:8px 0; padding:10px; border-radius:12px; text-align:center; font-weight:900; font-size:17px; background:rgba(255,255,255,.12)}
+  .turn.me{background:#ffcc33; color:#1d2a36}
+  .tabs{display:flex; gap:6px; margin-bottom:8px}
+  .tab{flex:1; padding:10px 6px; border-radius:12px; border:none; font:inherit; font-weight:800; font-size:15px;
+    background:rgba(255,255,255,.12); color:#fff; cursor:pointer}
+  .tab.on{background:#fff; color:#1d2a36}
+  #stage{position:relative; flex:1; min-height:0; border-radius:16px; overflow:hidden; background:#0a3d66}
+  canvas{display:block; width:100%; height:100%; touch-action:none}
+  .hint{position:absolute; left:8px; right:8px; top:8px; text-align:center; font-weight:800; font-size:14px;
+    background:rgba(0,0,0,.45); padding:8px 10px; border-radius:12px; pointer-events:none}
+  .bottom{margin-top:8px; display:flex; gap:8px; flex-wrap:wrap; align-items:center; justify-content:center}
+  .btn{border:none; border-radius:12px; padding:12px 16px; font:inherit; font-weight:800; font-size:16px; cursor:pointer}
+  .btn:disabled{opacity:.5}
+  .yellow{background:#ffcc33; color:#1d2a36}
+  .gray{background:#e4ebf3; color:#1d2a36}
+  .fleet{display:flex; gap:6px; flex-wrap:wrap; justify-content:center; font-size:13px}
+  .fleet span{background:rgba(255,255,255,.14); padding:5px 9px; border-radius:999px}
+  .fleet span.dead{text-decoration:line-through; opacity:.45}
+  .stat{font-weight:800; font-size:13px; background:rgba(255,255,255,.14); padding:6px 10px; border-radius:999px}
+
+  .screen{position:fixed; inset:0; z-index:30; display:flex; align-items:center; justify-content:center; padding:16px;
+    background:radial-gradient(circle at 20% 0%, #1d7fc9 0%, #0b3d66 60%, #072743 100%)}
+  .modal{position:fixed; inset:0; background:rgba(0,0,0,.6); display:flex; align-items:center; justify-content:center; padding:16px; z-index:10}
+  .card{background:#fffaf0; color:#1d2a36; border-radius:18px; padding:18px; width:100%; max-width:380px; text-align:center}
+  .card label{display:block; text-align:left; font-weight:700; margin:10px 0 6px}
+  .card input{width:100%; font-size:18px; padding:12px; border:2px solid #cfd8e3; border-radius:12px; outline:none}
+  .big{font-size:clamp(34px,10vw,52px); font-weight:900; margin:4px 0}
+  .say{background:#e6f0fa; border-radius:12px; padding:10px; font-size:20px; font-weight:800; margin:10px 0}
+  .say small{display:block; font-size:12px; font-weight:600; opacity:.6}
+  .hidden{display:none !important}
+  .toast{position:fixed; left:50%; top:max(64px,env(safe-area-inset-top)); transform:translateX(-50%); background:#1d2a36;
+    padding:10px 18px; border-radius:999px; font-weight:800; z-index:40; opacity:0; transition:opacity .2s; pointer-events:none; white-space:nowrap}
+  .toast.show{opacity:1}
+</style>
+<script type="importmap">{"imports":{
+  "three":"https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+  "@supabase/supabase-js":"https://esm.sh/@supabase/supabase-js@2"
+}}</script>
+</head>
+<body>
+
+<!-- 입장 화면 -->
+<div class="screen" id="lobby">
+  <div class="card">
+    <h1 style="color:#0b3d66">⚓ 3D Battleship</h1>
+    <p style="margin:6px 0 0; opacity:.7">같은 방 코드로 들어오면 대결 시작!</p>
+    <label for="name">이름</label>
+    <input id="name" maxlength="10" placeholder="예: 민준" autocomplete="off">
+    <label for="room">방 코드 (숫자 4자리)</label>
+    <input id="room" inputmode="numeric" maxlength="4" placeholder="1234" autocomplete="off">
+    <button class="btn yellow" id="join" style="width:100%; margin-top:14px; font-size:20px">입장 🚀</button>
+    <p id="lobbyMsg" style="font-weight:700; min-height:20px; margin:10px 0 0"></p>
+  </div>
+</div>
+
+<div id="app">
+  <header>
+    <h1>⚓ 3D Battleship</h1>
+    <span class="stat" id="stat"></span>
+  </header>
+  <div class="turn" id="turn">상대를 기다리는 중...</div>
+  <div class="tabs">
+    <button class="tab on" data-view="mine">🛡️ 내 바다</button>
+    <button class="tab" data-view="enemy">🎯 적 바다</button>
+  </div>
+  <div id="stage"><div class="hint" id="hint"></div></div>
+  <div class="bottom" id="setupBar">
+    <button class="btn gray" id="shuffle">🔀 다시 배치</button>
+    <button class="btn yellow" id="ready">✅ 배치 완료!</button>
+  </div>
+  <div class="bottom hidden" id="fleetBar"><div class="fleet" id="fleetList"></div></div>
+</div>
+
+<!-- 발사 확인 -->
+<div class="modal hidden" id="mFire">
+  <div class="card">
+    <div class="big" id="fCoord"></div>
+    <div class="say"><small>크게 외치고 발사! 👇</small><span id="fSay"></span></div>
+    <div style="display:flex; gap:8px">
+      <button class="btn gray" id="fCancel" style="flex:1">취소</button>
+      <button class="btn yellow" id="fGo" style="flex:2">🔥 발사!</button>
+    </div>
+  </div>
+</div>
+
+<!-- 결과 -->
+<div class="modal hidden" id="mResult">
+  <div class="card">
+    <div id="rTop" style="font-weight:800; opacity:.6"></div>
+    <div class="big" id="rBig"></div>
+    <div class="say"><small id="rWho"></small><span id="rSay"></span></div>
+    <button class="btn yellow" style="width:100%" id="rOk">OK</button>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script type="module">
+// =====================================================
+// 🔧 Supabase 설정: 프로젝트 URL과 anon(public) key를 넣으세요
+// Supabase 대시보드 → Project Settings → API
+const SUPABASE_URL = "https://xfdwfjqxhffchmgcgnku.supabase.co";
+const SUPABASE_ANON_KEY = "sb_publishable_UIRgcfecnZJk0ycDRv47MQ_8vagoI3e";
+// =====================================================
+
+import * as THREE from "three";
+import { createClient } from "@supabase/supabase-js";
+
+const N = 8, ROWS = "ABCDEFGH";
+const NUM = ["one","two","three","four","five","six","seven","eight"];
+const FLEET = [
+  {name:"Carrier", ko:"항공모함", len:5, color:0xf2a541},
+  {name:"Battleship", ko:"전함", len:4, color:0x5bc0be},
+  {name:"Cruiser", ko:"순양함", len:3, color:0xb388eb},
+  {name:"Submarine", ko:"잠수함", len:3, color:0x8bc34a},
+  {name:"Destroyer", ko:"구축함", len:2, color:0xf06292},
+];
+const $ = id => document.getElementById(id);
+const toast = t => { const e=$("toast"); e.textContent=t; e.classList.add("show"); clearTimeout(e._t); e._t=setTimeout(()=>e.classList.remove("show"),1600); };
+const cName = (r,c) => ROWS[r] + (c+1);
+const cSay = (r,c) => `"${ROWS[r]} ${NUM[c]}!"`;
+
+// ===== 상태 =====
+const myId = Math.random().toString(36).slice(2,10);
+const S = {
+  name:"", phase:"lobby", view:"mine",
+  ships:[], grid:null, received:new Set(), enemy:new Map(),
+  meReady:false, oppReady:false, opp:null, oppName:"상대",
+  myTurn:false, waiting:false, shots:0, enemySunk:0,
+};
+let ch = null;
+
+// ===== Three.js =====
+const stage = $("stage");
+const renderer = new THREE.WebGLRenderer({antialias:true});
+renderer.setPixelRatio(Math.min(devicePixelRatio,2));
+stage.prepend(renderer.domElement);
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x0a3d66);
+const camera = new THREE.PerspectiveCamera(45,1,.1,100);
+scene.add(new THREE.HemisphereLight(0xdff0ff, 0x0b2a44, 1.2));
+const sun = new THREE.DirectionalLight(0xffffff, 1.5); sun.position.set(4,10,6); scene.add(sun);
+
+const seaGeo = new THREE.PlaneGeometry(40,40,50,50);
+const sea = new THREE.Mesh(seaGeo, new THREE.MeshStandardMaterial({color:0x1468a8, roughness:.4, flatShading:true}));
+sea.rotation.x = -Math.PI/2; sea.position.y = -.3; scene.add(sea);
+const seaBase = seaGeo.attributes.position.array.slice();
+
+const pos = (r,c) => new THREE.Vector3(c-(N-1)/2, 0, r-(N-1)/2);
+const tiles = [];
+const tileGeo = new THREE.BoxGeometry(.94,.06,.94);
+for(let r=0;r<N;r++) for(let c=0;c<N;c++){
+  const m = new THREE.Mesh(tileGeo, new THREE.MeshStandardMaterial({color:0x2a8ad6, transparent:true, opacity:.55}));
+  m.position.copy(pos(r,c)); m.userData={r,c}; scene.add(m); tiles.push(m);
+}
+function label(text){
+  const cv=document.createElement("canvas"); cv.width=cv.height=128;
+  const g=cv.getContext("2d"); g.fillStyle="#fff"; g.font="bold 84px sans-serif"; g.textAlign="center"; g.textBaseline="middle"; g.fillText(text,64,68);
+  const sp=new THREE.Sprite(new THREE.SpriteMaterial({map:new THREE.CanvasTexture(cv), depthWrite:false}));
+  sp.scale.set(.7,.7,.7); scene.add(sp); return sp;
+}
+for(let i=0;i<N;i++){ label(ROWS[i]).position.copy(pos(i,-1)).setY(.3); label(String(i+1)).position.copy(pos(-1,i)).setY(.3); }
+
+const mineGroup = new THREE.Group(), enemyGroup = new THREE.Group();
+scene.add(mineGroup, enemyGroup); enemyGroup.visible=false;
+const cursor = new THREE.Mesh(new THREE.BoxGeometry(1,.1,1), new THREE.MeshBasicMaterial({color:0xffcc33, transparent:true, opacity:.6}));
+cursor.visible=false; scene.add(cursor);
+
+// ===== 정육면체 블록 =====
+const cubeGeo = new THREE.BoxGeometry(.86,.86,.86);
+const edgeGeo = new THREE.EdgesGeometry(cubeGeo);
+function cube(r,c,color,y=.43){
+  const m = new THREE.Mesh(cubeGeo, new THREE.MeshStandardMaterial({color, roughness:.5}));
+  m.add(new THREE.LineSegments(edgeGeo, new THREE.LineBasicMaterial({color:0x000000, transparent:true, opacity:.35})));
+  m.position.copy(pos(r,c)).setY(y); m.userData.pop=0; return m;
+}
+function missMark(r,c){
+  const m = new THREE.Mesh(new THREE.CylinderGeometry(.14,.14,.3,16), new THREE.MeshStandardMaterial({color:0xffffff}));
+  m.position.copy(pos(r,c)).setY(.18); m.userData.pop=0; return m;
+}
+function fire3d(r,c){
+  const f = new THREE.Mesh(new THREE.ConeGeometry(.22,.5,10), new THREE.MeshBasicMaterial({color:0xffaa22}));
+  f.position.copy(pos(r,c)).setY(1.1); f.userData.flame=true; return f;
+}
+const HIT=0xff4422, SUNK=0x2b2b2b;
+
+function placeFleet(){
+  S.grid = Array.from({length:N},()=>Array(N).fill(-1)); S.ships=[];
+  FLEET.forEach((f,id)=>{
+    for(let t=0;t<1000;t++){
+      const h=Math.random()<.5, r=Math.floor(Math.random()*(h?N:N-f.len+1)), c=Math.floor(Math.random()*(h?N-f.len+1:N));
+      const cells=[]; let ok=true;
+      for(let i=0;i<f.len;i++){const rr=h?r:r+i, cc=h?c+i:c; if(S.grid[rr][cc]!==-1){ok=false;break} cells.push([rr,cc]);}
+      if(!ok) continue;
+      cells.forEach(([rr,cc])=>S.grid[rr][cc]=id);
+      S.ships.push({...f, cells, hit:Array(f.len).fill(false), meshes:[]}); break;
+    }
+  });
+  mineGroup.clear();
+  S.ships.forEach(s=> s.cells.forEach(([r,c])=>{ const m=cube(r,c,s.color); m.userData.pop=1; s.meshes.push(m); mineGroup.add(m); }));
+}
+
+// ===== UI =====
+function setView(v){
+  S.view=v;
+  document.querySelectorAll(".tab").forEach(b=>b.classList.toggle("on", b.dataset.view===v));
+  mineGroup.visible = v==="mine"; enemyGroup.visible = v==="enemy";
+  const enemy = v==="enemy";
+  tiles.forEach(t=>t.material.color.set(enemy?0x6b4fd6:0x2a8ad6));
+  scene.background.set(enemy?0x231a4d:0x0a3d66);
+  sea.material.color.set(enemy?0x3a2a8a:0x1468a8);
+  cursor.visible=false; updateUI();
+}
+function updateUI(){
+  const left = S.ships.filter(s=>!s.hit.every(Boolean)).length;
+  $("stat").textContent = `나 ${left}/5 · 격침 ${S.enemySunk}/5 · 🎯${S.shots}`;
+  const t = $("turn"); t.classList.remove("me");
+  if(!S.opp) t.textContent = "⏳ 상대 입장을 기다리는 중...";
+  else if(S.phase==="setup") t.textContent = S.meReady ? `⏳ ${S.oppName} 배치 기다리는 중...` : `🆚 ${S.oppName} 입장! 배를 배치하세요`;
+  else if(S.phase==="over") t.textContent = "🏁 게임 끝";
+  else if(S.myTurn){ t.textContent = S.waiting ? "💣 발사! 결과 기다리는 중..." : "🎯 내 차례! 적 바다를 공격하세요"; t.classList.add("me"); }
+  else t.textContent = `🛡️ ${S.oppName} 차례... 방어 중`;
+  $("hint").textContent = S.phase==="setup" ? "배치가 마음에 안 들면 🔀 다시 배치"
+    : S.view==="mine" ? "내 함대 (빨강 = 맞은 곳)" : "쏠 칸을 탭하세요 🎯";
+  $("fleetList").innerHTML = S.ships.map(s=>`<span class="${s.hit.every(Boolean)?'dead':''}">${s.name} (${s.ko}) ${"■".repeat(s.len)}</span>`).join("");
+}
+document.querySelectorAll(".tab").forEach(b=> b.onclick=()=>setView(b.dataset.view));
+$("shuffle").onclick = ()=>{ if(!S.meReady) placeFleet(); };
+$("ready").onclick = ()=>{
+  if(!S.opp){ toast("상대가 아직 안 들어왔어요"); return; }
+  S.meReady=true; $("setupBar").classList.add("hidden"); $("fleetBar").classList.remove("hidden");
+  send({t:"ready"}); maybeStart(); updateUI();
+};
+function maybeStart(){
+  if(S.phase!=="setup" || !S.meReady || !S.oppReady) return;
+  S.phase="battle";
+  S.myTurn = myId < S.opp;   // 아이디 순서로 선공 결정
+  toast(S.myTurn ? "⚓ 전투 시작! 내가 선공!" : `⚓ 전투 시작! ${S.oppName} 선공`);
+  setView(S.myTurn ? "enemy" : "mine");
+}
+function showResult(top, big, who, say){
+  $("rTop").textContent=top; $("rBig").textContent=big; $("rWho").textContent=who; $("rSay").textContent=say;
+  $("mResult").classList.remove("hidden");
+}
+$("rOk").onclick = ()=> $("mResult").classList.add("hidden");
+
+// ===== 탭 → 발사 =====
+const ray=new THREE.Raycaster(), ndc=new THREE.Vector2();
+renderer.domElement.addEventListener("click", e=>{
+  const rect=renderer.domElement.getBoundingClientRect();
+  ndc.set(((e.clientX-rect.left)/rect.width)*2-1, -((e.clientY-rect.top)/rect.height)*2+1);
+  ray.setFromCamera(ndc,camera);
+  const h=ray.intersectObjects(tiles)[0]; if(h) onTile(h.object.userData.r, h.object.userData.c);
+});
+let target=null;
+function onTile(r,c){
+  if(S.phase!=="battle" || S.view!=="enemy") return;
+  if(!S.myTurn){ toast("상대 차례예요 ⏳"); return; }
+  if(S.waiting) return;
+  if(S.enemy.has(r+","+c)){ toast(cName(r,c)+"는 이미 쏜 칸!"); return; }
+  target={r,c}; cursor.position.copy(pos(r,c)); cursor.visible=true;
+  $("fCoord").textContent="🎯 "+cName(r,c); $("fSay").textContent=cSay(r,c);
+  $("mFire").classList.remove("hidden");
+}
+$("fCancel").onclick=()=>{ $("mFire").classList.add("hidden"); cursor.visible=false; };
+$("fGo").onclick=()=>{
+  $("mFire").classList.add("hidden");
+  S.waiting=true; S.shots++; send({t:"fire", r:target.r, c:target.c}); updateUI();
+};
+
+// ===== 메시지 처리 =====
+function onMsg(m){
+  if(m.from===myId) return;
+  if(m.t==="ready"){ S.oppReady=true; maybeStart(); updateUI(); }
+  else if(m.t==="fire") onFired(m.r, m.c);
+  else if(m.t==="result") onResult(m);
+}
+// 상대가 나를 쏨 → 자동 판정
+function onFired(r,c){
+  const key=r+","+c, id=S.grid[r][c];
+  let res="miss", ship=null, cells=null, over=false;
+  if(id!==-1 && !S.received.has(key)){
+    const s=S.ships[id]; const i=s.cells.findIndex(([a,b])=>a===r&&b===c);
+    s.hit[i]=true; s.meshes[i].material.color.set(HIT); mineGroup.add(fire3d(r,c));
+    res="hit";
+    if(s.hit.every(Boolean)){ res="sunk"; ship=s.name; cells=s.cells; s.meshes.forEach(m=>m.material.color.set(SUNK)); }
+    over = S.ships.every(x=>x.hit.every(Boolean));
+  } else if(id===-1 && !S.received.has(key)) mineGroup.add(missMark(r,c));
+  S.received.add(key);
+  send({t:"result", r, c, res, ship, cells, over});
+  S.myTurn = !over; if(over) S.phase="over";
+  setView("mine");
+  const say = res==="miss" ? '"Miss!"' : res==="hit" ? '"Hit!"' : `"You sunk my ${ship}!"`;
+  if(over) showResult(`${S.oppName}의 공격: ${cName(r,c)}`, "😭 LOSE", "내 함대 전멸! 이렇게 말해요 👇", `"You win! Good game!"`);
+  else showResult(`${S.oppName}의 공격: ${cName(r,c)}`, res==="miss"?"💦 MISS":res==="hit"?"🔥 HIT!":"💥 SUNK!", "상대에게 이렇게 말해요 👇", say);
+}
+// 내가 쏜 결과 도착
+function onResult(m){
+  S.waiting=false;
+  const {r,c,res}=m; S.enemy.set(r+","+c,res);
+  if(res==="miss") enemyGroup.add(missMark(r,c));
+  else { enemyGroup.add(cube(r,c,HIT)); enemyGroup.add(fire3d(r,c)); }
+  if(res==="sunk"){ S.enemySunk++; m.cells.forEach(([a,b])=>{ enemyGroup.add(cube(a,b,SUNK)); }); }
+  S.myTurn=false;
+  if(m.over){ S.phase="over"; showResult(`내 공격: ${cName(r,c)}`, "🏆 WIN!", "적 함대 전멸! 이렇게 말해요 👇", `"I win! Good game!"`); }
+  else showResult(`내 공격: ${cName(r,c)}`, res==="miss"?"💦 MISS":res==="hit"?"🔥 HIT!":"💥 SUNK!",
+    `${S.oppName}의 대답`, res==="miss"?'"Miss!"':res==="hit"?'"Hit!"':`"You sunk my ${m.ship}!"`);
+  updateUI();
+}
+
+// ===== Supabase Realtime =====
+function send(p){ ch?.send({type:"broadcast", event:"msg", payload:{...p, from:myId}}); }
+$("join").onclick = async ()=>{
+  const name=$("name").value.trim()||"Player", room=$("room").value.replace(/\D/g,"");
+  if(room.length!==4){ $("lobbyMsg").textContent="방 코드 4자리를 입력하세요"; return; }
+  S.name=name; $("join").disabled=true; $("lobbyMsg").textContent="연결 중...";
+  const sb=createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+  ch=sb.channel("battleship-"+room, {config:{broadcast:{self:false}, presence:{key:myId}}});
+  ch.on("broadcast",{event:"msg"},({payload})=>onMsg(payload));
+  ch.on("presence",{event:"sync"},()=>{
+    const st=ch.presenceState(); const others=Object.keys(st).filter(k=>k!==myId);
+    if(!S.opp && others.length){
+      S.opp=others.sort()[0]; S.oppName=st[S.opp][0]?.name||"상대";
+      toast(`🆚 ${S.oppName} 입장!`);
+      if(S.meReady) send({t:"ready"});
+    }
+    if(S.opp && !others.includes(S.opp) && S.phase!=="over") toast(`⚠️ ${S.oppName} 연결이 끊겼어요`);
+    updateUI();
+  });
+  ch.subscribe(async status=>{
+    if(status==="SUBSCRIBED"){
+      await ch.track({name});
+      $("lobby").classList.add("hidden"); S.phase="setup"; placeFleet(); setView("mine"); resize();
+    } else if(status==="CHANNEL_ERROR"||status==="TIMED_OUT"){
+      $("lobbyMsg").textContent="연결 실패 😢 URL/KEY를 확인하세요"; $("join").disabled=false;
+    }
+  });
+};
+
+// ===== 리사이즈 & 루프 =====
+function resize(){
+  const w=stage.clientWidth, h=stage.clientHeight; if(!w||!h) return;
+  renderer.setSize(w,h,false); camera.aspect=w/h;
+  const vt=Math.tan(THREE.MathUtils.degToRad(camera.fov/2));
+  const d=Math.max(5.4/(vt*camera.aspect), 5.6/vt);
+  const dir=(camera.aspect<1?new THREE.Vector3(0,.9,.44):new THREE.Vector3(0,.8,.6)).normalize().multiplyScalar(d);
+  camera.position.set(-.5+dir.x, dir.y, -.4+dir.z); camera.lookAt(-.5,0,-.4); camera.updateProjectionMatrix();
+}
+new ResizeObserver(resize).observe(stage);
+const clock=new THREE.Clock();
+(function loop(){
+  const t=clock.getElapsedTime(), p=seaGeo.attributes.position;
+  for(let i=0;i<p.count;i++){ const x=seaBase[i*3], y=seaBase[i*3+1]; p.array[i*3+2]=Math.sin(x*.6+t*1.2)*.12+Math.cos(y*.5+t)*.1; }
+  p.needsUpdate=true;
+  [mineGroup,enemyGroup].forEach(g=>g.children.forEach(o=>{
+    if(o.userData.pop!==undefined && o.userData.pop<1){ o.userData.pop=Math.min(1,o.userData.pop+.07); const s=.3+.7*o.userData.pop+Math.sin(o.userData.pop*Math.PI)*.35; o.scale.set(s,s,s); }
+    if(o.userData.flame) o.scale.y=1+Math.sin(t*12+o.position.x*3)*.3;
+  }));
+  if(cursor.visible) cursor.material.opacity=.35+.25*Math.sin(t*6);
+  renderer.render(scene,camera); requestAnimationFrame(loop);
+})();
+resize();
+</script>
+</body>
+</html>
